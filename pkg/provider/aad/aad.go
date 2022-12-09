@@ -17,7 +17,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/versent/saml2aws/v2/pkg/cfg"
 	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
 	"github.com/versent/saml2aws/v2/pkg/provider"
 	"golang.org/x/net/html"
 )
@@ -666,6 +665,8 @@ func (ac *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 	loginValues.Set("login", loginDetails.Username)
 	loginValues.Set("passwd", loginDetails.Password)
 
+	mfaToken := loginDetails.MFAToken
+
 	// Sometimes AAD response may contain "post url" as a relative url
 	// in this case, prepend the url scheme and host, of the URL we requested
 	var urlPost string
@@ -712,7 +713,7 @@ func (ac *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 		if strings.Contains(resBodyStr, "$Config") {
 			loginPasswordJson = ac.getJsonFromConfig(resBodyStr)
 		}
-		resBodyStr, err = ac.processAuth(loginPasswordJson, res)
+		resBodyStr, err = ac.processAuth(loginPasswordJson, res, mfaToken)
 		if err != nil {
 			return samlAssertion, err
 		}
@@ -812,7 +813,7 @@ func (ac *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 		if strings.Contains(resBodyStr, "$Config") {
 			loginPasswordJson = ac.getJsonFromConfig(resBodyStr)
 		}
-		resBodyStr, err = ac.processAuth(loginPasswordJson, res)
+		resBodyStr, err = ac.processAuth(loginPasswordJson, res, mfaToken)
 		if err != nil {
 			return samlAssertion, err
 		}
@@ -933,7 +934,7 @@ func (ac *Client) getJsonFromConfig(resBodyStr string) string {
 	return resBodyStr[startIndex:endIndex]
 }
 
-func (ac *Client) getMfaFlowToken(mfas []userProof, loginPasswordResp passwordLoginResponse) (mfaResponse, error) {
+func (ac *Client) getMfaFlowToken(mfas []userProof, loginPasswordResp passwordLoginResponse, mfaToken string) (mfaResponse, error) {
 	var mfaResp mfaResponse
 	if len(mfas) == 0 {
 		return mfaResp, fmt.Errorf("mfa not found")
@@ -973,7 +974,8 @@ func (ac *Client) getMfaFlowToken(mfas []userProof, loginPasswordResp passwordLo
 			SessionID:    mfaResp.SessionID,
 		}
 		if mfaReq.AuthMethodID == "PhoneAppOTP" || mfaReq.AuthMethodID == "OneWaySMS" {
-			verifyCode := prompter.StringRequired("Enter verification code")
+			//verifyCode := prompter.StringRequired("Enter verification code")
+			verifyCode := mfaToken
 			mfaReq.AdditionalAuthData = verifyCode
 		}
 		if mfaReq.AuthMethodID == "PhoneAppNotification" && i == 0 {
@@ -1039,7 +1041,7 @@ func (ac *Client) kmsiRequest(scheme string, host string, urlPost string, flowTo
 	return res, nil
 }
 
-func (ac *Client) processAuth(loginPasswordJson string, res *http.Response) (string, error) {
+func (ac *Client) processAuth(loginPasswordJson string, res *http.Response, mfaToken string) (string, error) {
 	var err error
 	var loginPasswordResp passwordLoginResponse
 	var loginPasswordSkipMfaResp SkipMfaResponse
@@ -1067,7 +1069,7 @@ func (ac *Client) processAuth(loginPasswordJson string, res *http.Response) (str
 	} else if len(mfas) != 0 {
 		// There's no explicit option to skip MFA, and MFA options are available
 		// Start MFA
-		mfaResp, err := ac.getMfaFlowToken(mfas, loginPasswordResp)
+		mfaResp, err := ac.getMfaFlowToken(mfas, loginPasswordResp, mfaToken)
 		if err != nil {
 			return resBodyStr, err
 		}
